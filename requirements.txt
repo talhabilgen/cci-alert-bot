@@ -2,4 +2,3 @@ pandas
 pandas_ta
 requests
 tradingview_ta
-Flask
