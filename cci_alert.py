@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import yfinance as yf
 import pandas_ta as ta
+import os
 
 # =====================
 # Telegram ayarları
@@ -45,3 +46,4 @@ while True:
 
     # 5 dakikada bir kontrol et
     time.sleep(300)
+
