@@ -4,7 +4,7 @@ import os
 import requests
 import pandas as pd
 import pandas_ta as ta
-from tvDatafeed import TvDatafeed, Interval
+from tradingview_ta import TA_Handler, Interval, Exchange
 
 # =====================
 # Telegram ayarları
@@ -20,12 +20,10 @@ def send_telegram_message(msg):
 # =====================
 # TradingView ayarları
 # =====================
-tv = TvDatafeed()  # Kullanıcı girişi opsiyonel, anonymous olarak çalışır
-
 SYMBOL = "XAUUSD"
-EXCHANGE = "OANDA"  # TradingView’daki OANDA verisi
-INTERVAL = Interval.in_5_minute
-N_BARS = 300  # son 300 barı çek
+EXCHANGE = "OANDA"
+SCREENER = "forex"
+INTERVAL = Interval.INTERVAL_5_MINUTES
 
 last_signal = None
 
@@ -34,12 +32,25 @@ last_signal = None
 # =====================
 while True:
     try:
-        # XAUUSD verisini çek
-        df = tv.get_hist(symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL, n_bars=N_BARS)
-        if df.empty:
-            print("Veri alınamadı, 1 dakika bekleniyor...")
-            time.sleep(60)
-            continue
+        handler = TA_Handler(
+            symbol=SYMBOL,
+            screener=SCREENER,
+            exchange=EXCHANGE,
+            interval=INTERVAL
+        )
+
+        analysis = handler.get_analysis()
+        # Close fiyatları al
+        close_prices = analysis.indicators['close'] if 'close' in analysis.indicators else None
+
+        # Eğer close fiyat yoksa, son bar fiyatını al
+        if close_prices is None:
+            close_prices = [analysis.indicators['close']]
+
+        df = pd.DataFrame(close_prices, columns=['close'])
+        # Fake High/Low ekle, çünkü pandas_ta CCI için lazım
+        df['high'] = df['close']
+        df['low'] = df['close']
 
         # CCI hesapla
         df['CCI'] = ta.cci(df['high'], df['low'], df['close'], length=25)
@@ -55,7 +66,7 @@ while True:
         # -100 seviyesini aşağıdan yukarı keserse
         if prev < -100 and current > -100:
             if last_signal != "cross_up":
-                msg = f"🚀 CCI -100 yukarı kesildi! {SYMBOL} (5m)\nGüncel CCI: {round(current,2)}"
+                msg = "CCI -100 yukarı kesildi! {} (5m)\nGüncel CCI: {:.2f}".format(SYMBOL, current)
                 send_telegram_message(msg)
                 print(msg)
                 last_signal = "cross_up"
