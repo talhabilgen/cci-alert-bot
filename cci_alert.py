@@ -5,6 +5,8 @@ import requests
 import pandas as pd
 import pandas_ta as ta
 from tradingview_ta import TA_Handler, Interval, Exchange
+from flask import Flask
+import threading
 
 # =====================
 # Telegram ayarları
@@ -18,63 +20,74 @@ def send_telegram_message(msg):
     requests.post(TELEGRAM_URL, data={"chat_id": CHAT_ID, "text": msg})
 
 # =====================
-# TradingView ayarları
+# Flask web server (Render port requirement)
 # =====================
-SYMBOL = "XAUUSD"
-EXCHANGE = "OANDA"
-SCREENER = "forex"
-INTERVAL = Interval.INTERVAL_5_MINUTES
+app = Flask(__name__)
 
-last_signal = None
+@app.route("/")
+def home():
+    return "CCI Bot Running"
 
 # =====================
-# Ana döngü
+# Bot loop
 # =====================
-while True:
-    try:
-        handler = TA_Handler(
-            symbol=SYMBOL,
-            screener=SCREENER,
-            exchange=EXCHANGE,
-            interval=INTERVAL
-        )
+def bot_loop():
+    SYMBOL = "XAUUSD"
+    EXCHANGE = "OANDA"
+    SCREENER = "forex"
+    INTERVAL = Interval.INTERVAL_5_MINUTES
 
-        analysis = handler.get_analysis()
-        # Close fiyatları al
-        close_prices = analysis.indicators['close'] if 'close' in analysis.indicators else None
+    last_signal = None
 
-        # Eğer close fiyat yoksa, son bar fiyatını al
-        if close_prices is None:
+    while True:
+        try:
+            # TradingView_TA verisi
+            handler = TA_Handler(
+                symbol=SYMBOL,
+                screener=SCREENER,
+                exchange=EXCHANGE,
+                interval=INTERVAL
+            )
+
+            analysis = handler.get_analysis()
+            # Close fiyatları al (indikator olarak gelmeyebilir)
             close_prices = [analysis.indicators['close']]
+            df = pd.DataFrame(close_prices, columns=['close'])
+            # Fake high/low ekle (CCI için lazım)
+            df['high'] = df['close']
+            df['low'] = df['close']
 
-        df = pd.DataFrame(close_prices, columns=['close'])
-        # Fake High/Low ekle, çünkü pandas_ta CCI için lazım
-        df['high'] = df['close']
-        df['low'] = df['close']
+            # CCI hesapla
+            df['CCI'] = ta.cci(df['high'], df['low'], df['close'], length=25)
 
-        # CCI hesapla
-        df['CCI'] = ta.cci(df['high'], df['low'], df['close'], length=25)
+            cci = df['CCI'].dropna()
+            if len(cci) < 2:
+                time.sleep(60)
+                continue
 
-        cci = df['CCI'].dropna()
-        if len(cci) < 2:
-            time.sleep(60)
-            continue
+            prev = cci.iloc[-2]
+            current = cci.iloc[-1]
 
-        prev = cci.iloc[-2]
-        current = cci.iloc[-1]
+            # -100 seviyesini aşağıdan yukarı keserse Telegram bildir
+            if prev < -100 and current > -100:
+                if last_signal != "cross_up":
+                    msg = "CCI -100 yukarı kesildi! {} (5m)\nGüncel CCI: {:.2f}".format(SYMBOL, current)
+                    send_telegram_message(msg)
+                    print(msg)
+                    last_signal = "cross_up"
+            else:
+                last_signal = None
 
-        # -100 seviyesini aşağıdan yukarı keserse
-        if prev < -100 and current > -100:
-            if last_signal != "cross_up":
-                msg = "CCI -100 yukarı kesildi! {} (5m)\nGüncel CCI: {:.2f}".format(SYMBOL, current)
-                send_telegram_message(msg)
-                print(msg)
-                last_signal = "cross_up"
-        else:
-            last_signal = None
+        except Exception as e:
+            print("Hata:", e)
 
-    except Exception as e:
-        print("Hata:", e)
+        # 5 dakikada bir kontrol et
+        time.sleep(300)
 
-    # 5 dakikada bir kontrol et
-    time.sleep(300)
+# Bot loop'u thread olarak başlat
+threading.Thread(target=bot_loop, daemon=True).start()
+
+# Flask app'i çalıştır (Render port requirement)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
