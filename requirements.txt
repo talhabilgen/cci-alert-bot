@@ -1,4 +1,4 @@
 pandas
 pandas_ta
 requests
-tvdatafeed
+tradingview_ta
